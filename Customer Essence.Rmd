@@ -1,0 +1,1151 @@
+---
+title: 'Customer Essence: Decoding Purchase Behaviors through Personality Analysis'
+author: "Doruk Arslan"
+date: "`r format(as.Date('2023-11-13'), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: spacelab
+    highlight: tango
+    code_folding: show
+---
+
+&nbsp;
+
+# Introduction
+
+
+This report provides an in-depth analysis of customer purchase behaviors, with a focus on demographic features such as age and marital status. By analyzing customer data, we can uncover patterns and insights that drive marketing strategies and personalize customer experiences.
+
+
+
+&nbsp;
+
+## Objectvies 
+```{r, echo=FALSE, results='asis'}
+cat("
+The primary goal of this analysis is to:
+
+- Conduct Univariate Analysis on customer demographics such as age, marital status, education, etc.
+- Analyze Multivariate relationships, focusing on how different factors like income, age, marital status, etc., relate to spending behaviors.
+- Understand the impact of having children, education level, and campaign interactions on customer spending.
+
+
+")
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(cluster)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(kableExtra)
+
+```
+&nbsp;
+
+# Data Overview
+
+Let's begin by taking a general look at the structure and summary of the data.
+
+
+```{r}
+csvData <- read_delim("marketing_campaign.csv", delim = "\t")
+csvData <- csvData %>%
+  mutate(Age = as.numeric(format(Sys.Date(), "%Y")) - Year_Birth)
+
+cat("Shape of the DataFrame is:", dim(csvData), "\n\n")
+
+cat("Summary of the DataFrame:\n")
+str(csvData)
+
+cat("\nColumns in DataFrame:\n")
+print(names(csvData))
+```
+&nbsp;
+
+## Numeric Summary
+
+Now, we focus on summarizing the numeric attributes of the customers in the dataset.
+
+
+```{r}
+csvData %>% 
+  select_if(is.numeric) %>% 
+  summary() %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F, position = "left") %>%
+  scroll_box(width = "100%", height = "500px")
+```
+
+&nbsp;
+
+## Missing Data Analysis
+
+
+
+Understanding missing data is crucial. It helps us to decide whether we can ignore or we need to handle these missing values.
+
+
+```{r}
+
+suppressPackageStartupMessages(library(scales))
+
+missing_data <- function(data) {
+  total <- sum(is.na(data))
+  percentage <- mean(is.na(data)) * 100
+  tibble(Total = total, Percentage = percentage)
+}
+
+missing_values <- csvData %>%
+  summarise_all(~sum(is.na(.))) %>%
+  gather(key = "Variable", value = "Total") %>%
+  mutate(Percentage = Total / nrow(csvData) * 100)
+
+missing_values %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F, position = "left") %>%
+  scroll_box(width = "40%", height = "500px")
+
+
+ggplot(missing_values, aes(x = reorder(Variable, -Total), y = Total)) +
+  geom_bar(stat = "identity", fill = "grey") +
+  scale_y_continuous(labels = comma) +
+  labs(x = "Variable", y = "Total Missing Values", title = "Missing Data in Each Column") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5))
+
+```
+
+&nbsp;
+
+### Income Data Handling
+
+Here we handle missing data within the 'Income' column by imputing missing values with the median income.
+
+```{r}
+names(csvData) <- trimws(names(csvData))
+
+median_income <- median(csvData$Income, na.rm = TRUE)
+  
+print(median_income)
+
+csvData$Income <- ifelse(is.na(csvData$Income), median_income, csvData$Income)
+
+any_na_present <- anyNA(csvData)
+print(any_na_present)
+
+
+```
+
+&nbsp;
+
+
+## Duplicate Records Analysis
+
+Before diving deep into our dataset, it's crucial to identify and handle duplicate entries. Duplicates can lead to skewed analysis results by over-representing certain data points.
+```{r}
+duplicate_rows <- csvData[duplicated(csvData), ]
+
+print(duplicate_rows)
+
+num_duplicate_rows <- nrow(duplicate_rows)
+cat("Number of duplicate rows: ", num_duplicate_rows, "\n")
+
+num_unique_values <- sapply(csvData, function(x) length(unique(x)))
+
+unique_values_df <- as.data.frame(num_unique_values)
+
+names(unique_values_df) <- c("UniqueValues")
+
+print(unique_values_df)
+```
+&nbsp;
+
+### Initial Data Overview
+
+After cleaning the dataset, let's take a look at the first few entries. This will provide a snapshot of the data we're working with and help verify the structure and key fields after preprocessing steps.
+
+
+```{r}
+
+csvData <- csvData %>% select(-Z_CostContact, -Z_Revenue)
+
+head(csvData, 3) %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F, position = "left") %>%
+  scroll_box(width = "100%", height = "170")
+
+```
+
+&nbsp;
+
+# Univariate Analysis
+
+&nbsp;
+
+## Age Distribution
+
+
+
+```{r}
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(grid))
+
+p1 <- ggplot(csvData, aes(y = Age)) + 
+  geom_boxplot(fill = "skyblue") + 
+  labs(title = "Age Distribution with Outliers", y = "Age") + 
+  theme_minimal()+
+  theme(
+     panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank()
+  )
+
+csvData <- csvData %>% filter(Age <= 100)
+
+p2 <- ggplot(csvData, aes(y = Age)) + 
+  geom_boxplot(fill = "lightgreen") + 
+  labs(title = "Age Distribution without Outliers", y = "Age") + 
+  theme_minimal() + 
+  theme (
+     panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank()
+  )
+
+grid.arrange(p1, p2, ncol = 2)
+
+
+```
+
+&nbsp;
+
+Now, let's calculate the age of each customer and create a bar plot that showcases the current overall distribution.
+
+```{r}
+
+summary_without_outliers <- summary(csvData %>% filter(Age <= 100) %>% .$Age)
+
+print(summary_without_outliers)
+
+age_bins <- seq(from = floor(min(csvData$Age)/5)*5, to = ceiling(max(csvData$Age)/5)*5, by = 5)
+
+csvData <- csvData %>%
+  mutate(Age_Group = cut(Age, breaks = age_bins, include.lowest = TRUE, right = FALSE, labels = paste(age_bins[-length(age_bins)], age_bins[-1]-1, sep="-")))
+
+age_distribution_grouped <- csvData %>%
+  count(Age_Group) %>%
+  arrange(Age_Group) 
+
+ggplot(age_distribution_grouped, aes(x = Age_Group, y = n)) +
+  geom_bar(aes(fill = n), stat = "identity", width = 0.7) +
+  geom_text(aes(label = n), position = position_stack(vjust = 0.5), size = 3.5, color = "white") +
+  labs(title = "Customer Age Distribution",
+       x = "Age Group",
+       y = "Count of Individuals",
+       fill = "Frequency") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 12, face = "bold")) +
+  scale_fill_gradient(low = "lightsteelblue", high = "blueviolet", name = "Frequency") 
+```
+
+&nbsp;
+
+
+**Observation:** The customer base presents a mature age profile with the median age at 53, indicating that the majority of customers are likely to be in a well-established stage of life. The age range is broad, extending from 27 to 83 years, with a concentration between 46 and 64, suggesting that products and services should be targeted towards the needs of middle-aged to senior adults.
+
+&nbsp;
+
+##  Marital Status
+
+
+```{r}
+
+csvData <- csvData %>%
+  mutate(Marital_Status = case_when(
+    Marital_Status %in% c('Married', 'Together') ~ 'Relationship',
+    Marital_Status %in% c('Divorced', 'Widow', 'Alone', 'YOLO', 'Absurd') ~ 'Single',
+    TRUE ~ Marital_Status
+  ))
+
+pie_chart <- csvData %>%
+  count(Marital_Status) %>%
+  mutate(Labels = paste0(Marital_Status, "\n", scales::percent(n/sum(n)))) %>%
+  ggplot(aes(x = "", y = n, fill = Marital_Status, label = Labels)) +
+  geom_bar(width = 1, stat = "identity") +
+  geom_text(aes(label = Labels), position = position_stack(vjust = 0.5)) +
+  coord_polar("y", start = 0) +
+  labs(title = "Proportion by Marital Status", x = NULL, y = NULL) +
+  theme_void() +
+  scale_fill_manual(values = colorRampPalette(c("lightsteelblue", "blueviolet"))(length(unique(csvData$Marital_Status)))) +
+  theme(legend.position = "none",  panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+
+    )
+
+
+grid.arrange(pie_chart, nrow = 1)
+
+```
+&nbsp;
+
+
+**Observation:** Customers are predominantly in a relationship, with 65% indicating a marital status of 'Married' or 'Together'. This suggests a customer base that may have considerations for family or partners in their purchasing decisions. In contrast, the single customers, including 'Divorced', 'Widow', 'Alone', 'YOLO', and 'Absurd', make up 35%, which may indicate a significant market for individual-centered products and services
+
+
+&nbsp;
+
+## Kidhome & Teenhome
+KidHome & TeenHome
+```{r}
+
+children_home_summary <- csvData %>%
+  mutate(Children_at_Home = if_else(Kidhome + Teenhome > 0, "Yes", "No")) %>%
+  count(Children_at_Home) %>%
+  mutate(Percentage = n / sum(n) * 100) 
+
+children_home_chart <- ggplot(children_home_summary, aes(x = Children_at_Home, y = n, fill = Children_at_Home)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Customers with Children at Home", x = "Children at Home", y = "Number of Customers") +
+  theme_minimal() +
+  scale_fill_manual(values = c("Yes" = "lightblue", "No" = "salmon")) +
+  theme(legend.position = "none", 
+        panel.grid.major = element_blank(),  
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+print(as.data.frame(children_home_summary), row.names = FALSE)
+
+grid.arrange(children_home_chart) 
+
+csvData <- csvData %>%
+  mutate(TotalKids = Kidhome + Teenhome)
+
+kids_freq_summary <- csvData %>%
+  count(TotalKids) %>%
+  mutate(Percentage = n / sum(n) * 100) 
+
+kids_freq_chart <- ggplot(kids_freq_summary, aes(x = as.factor(TotalKids), y = n, fill = as.factor(TotalKids))) +
+  geom_bar(stat = "identity") +
+  scale_fill_brewer(palette = "Set3", direction = -1) + 
+  labs(title = "Number of Children in Customers' Households",
+       x = "Number of Children",
+       y = "Number of Customers",
+       fill = "Number of Children") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    axis.title = element_text(size = 14),
+    axis.text.x = element_text(angle = 0, hjust = 1),
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+
+
+
+print(as.data.frame(kids_freq_summary), row.names = FALSE)
+
+```
+
+&nbsp;
+
+
+**Observation:** The majority of customers (71.5%) have children at home, with half of these families having one child (50.3%). Families with two or more children represent a smaller portion of the market, indicating a higher concentration of smaller families within the customer base.
+
+&nbsp;
+
+
+## Education
+Education
+
+```{r}
+
+education_chart <- csvData %>%
+  count(Education) %>%
+  ggplot(aes(x = reorder(Education, -n), y = n, fill = Education)) + 
+  geom_bar(stat = "identity") +
+  labs(title = "Customer Education Levels", x = "Education Level", y = "Number of Customers") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Pastel1") +
+  theme(plot.title = element_text(hjust = 0.5), 
+         panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(education_chart)
+
+education_summary <- csvData %>%
+  count(Education) %>%
+  mutate(Percentage = n / sum(n) * 100)
+
+print(as.data.frame(education_summary), row.names = FALSE)
+```
+&nbsp;
+
+**Observation: ** The education level among customers is predominantly 'Graduation' at over 50%, indicating that the majority have completed a degree equivalent to a college education. Postgraduate degrees (Masters and PhD) are also significant, accounting for approximately 38% combined, which suggests a well-educated customer base. Only a small fraction have 'Basic' education at 2.4%, and '2n Cycle' represents just under 9%
+&nbsp;
+
+## Income
+Income
+```{r}
+
+
+common_theme <- theme(
+  axis.title.x = element_blank(),
+  axis.text.x = element_blank(),
+  axis.ticks.x = element_blank(),
+  axis.text.y = element_text(size = 15),  
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  panel.border = element_blank(),  
+  panel.background = element_blank(),  
+  plot.background = element_blank() ,
+  plot.title = element_text(hjust = 0.5)
+
+)
+
+bp_before <- ggplot(csvData, aes(y = Income)) + 
+  geom_boxplot(fill = "lightcoral", color = "black", width = 0.7) + 
+  theme_minimal() +
+  common_theme + 
+  ylab("Income") + 
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Before Outliers") 
+
+csvData <- csvData %>% 
+  filter(Income < 120000)
+
+bp_after <- ggplot(csvData, aes(y = Income)) +
+  geom_boxplot(fill = "lightskyblue", color = "black", width = 0.7) +  
+  theme_minimal() +
+  common_theme +
+  labs(y = "Income", title = "After Outliers")  
+
+grid.arrange(bp_before, bp_after, ncol = 2)
+
+ggplot(csvData, aes(x = Income)) +
+  geom_density(fill = "blueviolet", alpha = 0.5) +
+  labs(x = "Income", title = "Income Distribution Density") +
+  theme_light() +
+  theme(text = element_text(size = 15) , 
+    panel.border = element_blank(),  
+    panel.background = element_blank(),
+    panel.grid.major = element_blank(), 
+    plot.title = element_text(hjust = 0.5),
+    panel.grid.minor = element_blank())
+
+income_summary <- csvData %>%
+  mutate(Income_Range = cut(Income, breaks = seq(0, 120000, by = 20000), include.lowest = TRUE)) %>%
+  count(Income_Range) %>%
+  mutate(Percentage = n / sum(n) * 100)
+
+print(as.data.frame(income_summary), row.names = FALSE)
+```
+&nbsp;
+
+**Observation:** The majority of customers have incomes between 40,000 to 80,000, encompassing approximately 58% of the customer base, indicative of a strong middle-class presence. The 20,000 to 40,000 income range is also significant, accounting for 27% of customers. Notably, high earners with incomes between 80,000 to 100,000 constitute 9% of the customer base, while those earning over 100,000 are relatively rare at 0.22%. This suggests that luxury or high-end products may cater to a smaller segment of the market.
+
+&nbsp;
+
+## Expenses
+Expenses
+```{r}
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(reshape2))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(scales))
+
+data_long <- melt(csvData, id.vars = "ID", 
+                  measure.vars = c("MntWines", "MntFruits", "MntMeatProducts", 
+                                   "MntFishProducts", "MntSweetProducts", "MntGoldProds"),
+                  variable.name = "Category", value.name = "Expenses")
+
+category_summary <- data_long %>%
+  group_by(Category) %>%
+  summarise(Total_Expenses = sum(Expenses), .groups = 'drop') %>%
+  mutate(Percentage = (Total_Expenses / sum(Total_Expenses)) * 100)
+
+  print(as.data.frame(category_summary), row.names = FALSE)
+
+
+p <- ggplot(category_summary, aes(x = Category, y = Total_Expenses, fill = Category)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_x_discrete() +
+  scale_y_continuous(labels = label_number(accuracy = 0.1)) +
+  labs(x = "Product Category", y = "Total Expenses") +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12), 
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), 
+    axis.title.y = element_text(vjust = 2),
+    axis.text.y = element_text(angle = 0),
+    panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+  legend.position = "none"
+
+  )
+print(p) 
+```
+
+&nbsp;
+
+**Observation:**  Wines are the leading category in customer expenses, accounting for over 50% of the total, which may suggest a customer base with a strong preference for this product. Meat products also hold a significant share at 27%, while other categories like fruits, fish, and sweets each represent less than 7% of the total expenses.
+
+&nbsp;
+
+
+## Campaigns
+
+```{r}
+
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(ggplot2))
+
+
+csvData <- csvData %>%
+  mutate(TotalAcceptedCmp = AcceptedCmp1 + AcceptedCmp2 + AcceptedCmp3 + 
+                            AcceptedCmp4 + AcceptedCmp5 + Response)
+
+accepted_freq <- csvData %>%
+  count(TotalAcceptedCmp) %>%
+  mutate(Percentage = n / sum(n) * 100)  
+
+print(as.data.frame(accepted_freq), row.names = FALSE)
+
+ggplot(accepted_freq, aes(x = as.factor(TotalAcceptedCmp), y = n, fill = as.factor(TotalAcceptedCmp))) +
+  geom_bar(stat = "identity") +
+  scale_fill_viridis_d(direction = -1) +  
+  labs(title = "Frequency of Accepted Offers per Customer",
+       x = "Total Number of Accepted Offers",
+       y = "Frequency") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust=0.5),
+    axis.title = element_text(size = 12),
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(hjust = 1),
+    legend.position = "none"
+  )
+```
+
+&nbsp;
+
+**Observation:** A vast majority of customers (approximately 73%) did not accept any campaign offers, which could indicate a challenge in the effectiveness of the campaigns or a generally low propensity to respond. However, there is a small segment (about 17%) that engaged with one campaign, potentially representing a more responsive or interested customer group.
+
+&nbsp;
+
+
+## Purchase Places
+```{r}
+
+
+purchase_data_long <- csvData %>%
+  select(NumWebPurchases, NumCatalogPurchases, NumStorePurchases) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "PurchasePlace",
+    values_to = "NumberOfPurchases"
+  ) %>%
+  group_by(PurchasePlace) %>%
+  summarise(TotalPurchases = sum(NumberOfPurchases), .groups = 'drop') %>%
+  mutate(Percentage = TotalPurchases / sum(TotalPurchases) * 100)  
+
+print(as.data.frame(purchase_data_long), row.names = FALSE)
+
+
+ggplot(purchase_data_long, aes(x = PurchasePlace, y = TotalPurchases, fill = PurchasePlace)) +
+  geom_bar(stat = "identity") +
+  scale_fill_brewer(palette = "Dark2") + 
+  labs(title = "Purchases Made From Different Places",
+       x = "",
+       y = "Total Number of Purchases") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust= 0.5),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 12),
+    axis.text.x = element_text(angle = 0, vjust = 1),
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+
+    legend.position = "none" 
+  )
+```
+
+&nbsp;
+
+**Observation:**  Store purchases dominate the shopping venues, with nearly half of the purchases (46%) being made in-store. Web purchases account for roughly a third of the transactions, suggesting a significant online engagement, while catalog purchases are the least preferred method at 21%. This could indicate that despite the rise of digital platforms, physical stores remain a crucial point of sale.
+
+&nbsp;
+
+# Multivariate Analysis
+
+&nbsp;
+
+## Income vs Spendings
+```{r message=FALSE}
+
+  csvData <- csvData %>%
+    mutate(Total_Spendings = MntWines + MntFruits + MntMeatProducts + MntFishProducts + MntSweetProducts + MntGoldProds)
+  
+  
+  correlation_income_spendings <- cor(csvData$Income, csvData$Total_Spendings, use = "complete.obs")
+  cat("Correlation between Income and Total Spendings:", correlation_income_spendings, "\n")
+  
+  p_income_spendings <- ggplot(csvData, aes(x = Income, y = Total_Spendings)) +
+    geom_point(color = "blueviolet", alpha = 0.5) +  
+    labs(
+      title = "Income vs Spendings",
+      x = "Income",
+      y = "Spendings"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
+      axis.title.x = element_text(size = 18),
+      axis.title.y = element_text(size = 18),
+      axis.text = element_text(size = 12),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+      legend.position = "none"
+    ) +
+    scale_x_continuous(labels = dollar_format()) +
+    scale_y_continuous(labels = dollar_format())
+  
+  print(p_income_spendings)
+
+```
+&nbsp;
+
+**Observation:**  There is a strong positive correlation (0.82) between income and spending, suggesting that customers with higher incomes tend to spend more, which is indicative of significant purchasing power and could inform targeted marketing strategies.
+
+&nbsp;
+
+## Age vs Spendings
+```{r message=FALSE}
+
+  correlation_age_spendings <- cor(csvData$Age, csvData$Total_Spendings, use = "complete.obs")
+  cat("Correlation between Age and Total Spendings:", correlation_age_spendings, "\n")
+  
+  p_age_spendings <- ggplot(csvData, aes(x = Age, y = Total_Spendings)) +
+    geom_point(aes(color = Age), alpha = 0.6) + 
+    geom_smooth(method = "lm", se = FALSE, color = "blue") +  
+    scale_color_gradient(low = "yellow", high = "red") + 
+    labs(
+      title = "Age vs. Total Spendings",
+      x = "Age (Years)",
+      y = "Total Spendings (Last 2 Years)"
+    ) +
+    theme_minimal() +
+    theme(
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(size = 22, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16),
+      legend.position = "none"
+    )
+  
+  print(p_age_spendings)
+
+```
+
+&nbsp;
+
+**Observation:**  The correlation (0.12) between age and spending is relatively weak, indicating that age is not a strong predictor of spending among customers, and marketing efforts may be better focused on other demographic factors.
+
+&nbsp;
+
+##  Martial Status vs Spendings
+
+```{r message=FALSE}
+
+avg_spendings_by_marital <- csvData %>%
+  group_by(Marital_Status) %>%
+  summarise(Average_Spendings = mean(Total_Spendings, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Marital_Status = factor(Marital_Status, levels = Marital_Status[order(-Average_Spendings)])) 
+
+ print(as.data.frame(avg_spendings_by_marital), row.names = FALSE)
+
+  ggplot(avg_spendings_by_marital, aes(x = Marital_Status, y = Average_Spendings, fill = Marital_Status)) +
+    geom_bar(stat = "identity") +
+    scale_fill_brewer(palette = "Paired") + 
+    labs(title = "Marital Status vs Expenses",
+       x = "Marital Status",
+       y = "Average Expenses") +
+    theme_minimal() +
+    theme(
+       panel.grid.major = element_blank(),  
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(size = 14, face = "bold", hjust=0.5),
+      axis.title.x = element_text(size = 12),
+      axis.title.y = element_text(size = 12),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"  
+    ) +
+    scale_y_continuous(labels = scales::dollar) 
+```
+
+&nbsp;
+
+**Observation:**  Interestingly, individuals with a status of 'Single' exhibit higher average spending (approximately $622) compared to those in a Relationship (nearly $596). This could suggest that single customers have more discretionary spending or different purchasing habits that favor more spending on the categories considered, perhaps due to fewer household obligations or different lifestyle choices.
+
+&nbsp;
+
+
+## How Having Kids Effect Expenses 
+```{r message=FALSE}
+
+csvData <- csvData %>%
+  mutate(TotalKids = factor(Kidhome + Teenhome))
+
+avg_spendings_by_kids <- csvData %>%
+  group_by(TotalKids) %>%
+  summarise(Average_Spendings = mean(Total_Spendings, na.rm = TRUE)) %>%
+  ungroup() %>%
+  arrange(desc(Average_Spendings))
+
+ print(as.data.frame(avg_spendings_by_kids), row.names = FALSE)
+
+ggplot(avg_spendings_by_kids, aes(x = TotalKids, y = Average_Spendings, fill = TotalKids)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  scale_fill_brewer(palette = "Spectral") + 
+  labs(title = "Average Spendings by Number of Kids in Household",
+       x = "Total Number of Kids",
+       y = "Average Spendings") +
+  theme_minimal() +
+  theme(
+     panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(size = 14, face = "bold", hjust =0.5),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    axis.text.x = element_text(angle = 0, hjust = 1),
+    legend.position = "none"  
+
+  ) +
+  scale_y_continuous(labels = scales::dollar_format()) 
+```
+
+&nbsp;
+
+**Observation:**  Customers without children lead with the highest average spending, over $1100, potentially reflecting greater disposable income and freedom to spend on personal indulgences. The presence of children correlates with a marked decrease in spending, where those with one child spend about $473, and it further declines as the number of children increases. This highlights a clear opportunity for child-centric marketing strategies and the potential to cater to the distinct needs of childless households.
+
+&nbsp;
+
+## Education vs Income & Expenses
+```{r message=FALSE}
+
+
+education_summary <- csvData %>%
+  group_by(Education) %>%
+  summarise(Average_Income = mean(Income, na.rm = TRUE),
+            Average_Expenses = mean(Total_Spendings, na.rm = TRUE)) %>%
+  ungroup()
+
+print(as.data.frame(education_summary), row.names = FALSE)
+
+education_income_plot <- ggplot(csvData, aes(x = Education, y = Income, color = Education)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  labs(title = "Income by Education Level", x = "", y = "Income") +
+  theme_minimal() +
+  theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank(), plot.title = element_text(hjust = 0.5))
+
+education_expenses_plot <- ggplot(csvData, aes(x = Education, y = Total_Spendings, color = Education)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  labs(title = "Expenses by Education Level", x = "" , y = "Total Expenses") +
+  theme_minimal() +
+  theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank(), plot.title = element_text(hjust = 0.5))
+
+grid.arrange(education_income_plot, education_expenses_plot, ncol = 2)
+```
+
+
+&nbsp;
+
+**Observation:**  Individuals with a PhD not only exhibit the highest average income at approximately $55,181 but also the greatest average expenses, around $668, suggesting a correlation between educational attainment and spending capacity. In contrast, those with basic education have significantly lower average income and expenses, indicating that educational level is a strong predictor of economic behavior and potential in the marketplace.
+
+&nbsp;
+
+## Campaigns vs Expenses
+```{r message=FALSE}
+
+campaign_data_long <- csvData %>%
+  select(Total_Spendings, starts_with("AcceptedCmp"), Response) %>%
+  pivot_longer(cols = starts_with("AcceptedCmp"), names_to = "Campaign", values_to = "Accepted") %>%
+  mutate(Campaign = factor(Campaign, levels = c("AcceptedCmp1", "AcceptedCmp2", 
+                                                "AcceptedCmp3", "AcceptedCmp4", 
+                                                "AcceptedCmp5", "Response")))
+
+campaign_summary <- campaign_data_long %>%
+  group_by(Campaign, Accepted) %>%
+  summarise(Average_Expenses = mean(Total_Spendings, na.rm = TRUE)) %>%
+  ungroup()
+
+print(as.data.frame(campaign_summary), row.names = FALSE)
+
+campaign_expenses_plot <- ggplot(campaign_data_long, aes(x = Campaign, y = Total_Spendings, fill = as.factor(Accepted))) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Set1") +
+  labs(title = "Effect of Campaign Acceptance on Customer Expenses", x = "", y = "Total Expenses", fill = "Accepted Offer") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),  
+        plot.title = element_text(size = 14, face = "bold", hjust=0.5),
+        legend.title = element_text(size = 12),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 12)) +
+    scale_x_discrete()  
+
+
+print(campaign_expenses_plot)
+```
+
+
+&nbsp;
+
+**Observation:**  The data reveals a striking insight: customers who accepted campaign offers, on average, spent markedly more than those who did not. For instance, those accepting the first campaign spent an average of $1,482 compared to $545 for those who did not. This pattern is consistent across campaigns, with AcceptedCmp5 showing the most significant difference — those who accepted this campaign spent over three times more than those who did not. This underscores the effectiveness of marketing campaigns in driving higher expenditure among responsive customers.
+
+
+&nbsp;
+
+
+## Age vs Product Type
+```{r message=FALSE}
+csvData <- csvData %>%
+  mutate(Age_Group = case_when(
+    Age >= 0 & Age <= 30   ~ "0-30",
+    Age > 30 & Age <= 60   ~ "31-60",
+    Age > 60 & Age <= 100  ~ "61-100",
+    TRUE                   ~ "Out of range"
+  ))
+
+melted_data <- csvData %>%
+  select(ID, Age_Group, MntWines, MntFruits, MntMeatProducts, MntFishProducts, MntSweetProducts, MntGoldProds) %>%
+  pivot_longer(
+    cols = starts_with("Mnt"),
+    names_to = "Product_Type",
+    values_to = "Amount_Spent"
+  )
+
+age_product_totals <- melted_data %>%
+  group_by(Age_Group, Product_Type) %>%
+  summarise(Total_Amount_Spent = sum(Amount_Spent), .groups = 'drop')
+
+age_group_totals <- age_product_totals %>%
+  group_by(Age_Group) %>%
+  summarise(Total_Spent_by_Age_Group = sum(Total_Amount_Spent), .groups = 'drop')
+
+age_product_percentages <- age_product_totals %>%
+  left_join(age_group_totals, by = "Age_Group") %>%
+  mutate(Percentage = Total_Amount_Spent / Total_Spent_by_Age_Group * 100) %>%
+  select(Age_Group, Product_Type, Total_Amount_Spent, Total_Spent_by_Age_Group, Percentage)
+
+print(age_product_percentages, row.names = FALSE)
+
+ggplot(melted_data, aes(x = Age_Group, y = Amount_Spent, fill = Product_Type)) +
+  geom_bar(stat = "summary", fun = "sum", position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Product Spending by Age Group",
+       x = "Age Group",
+       y = "Percentage of Total Spending",
+       fill = "Product Type") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+         panel.grid.major = element_blank(),  
+      panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 16, face = "bold",  hjust = 0.5),
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.position = "bottom") +
+  scale_fill_brewer(palette = "Set3")
+```
+
+&nbsp;
+
+**Observation:**  The youngest age group (0-30) shows a balanced expenditure across different product types, with the highest percentages spent on meat products (35.9%) and wines (37.5%). For the middle-aged group (31-60), there's a notable preference for wines, which account for nearly half of their spending at 49.1%. Seniors (61-100) also demonstrate a similar pattern, dedicating a significant 52.8% of their spending to wines, highlighting a consistent trend across age groups favoring this category.
+
+
+&nbsp;
+
+## Martial Status vs Purchase Place
+```{r}
+
+csvData <- csvData %>%
+  mutate(Marital_Simplified = if_else(Marital_Status %in% c("Single", "Alone", "Divorced", "Widow"), "Single", "In Relationship"))
+
+marital_online_stats <- csvData %>%
+  group_by(Marital_Simplified) %>%
+  summarise(Average_Online_Purchases = mean(NumWebPurchases, na.rm = TRUE)) %>%
+  ungroup()
+
+print(as.data.frame(marital_online_stats), row.names = FALSE)
+
+ggplot(csvData, aes(x = Marital_Simplified, y = NumWebPurchases, fill = Marital_Simplified)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("Single" = "#1f77b4", "In Relationship" = "#ff7f0e")) +
+  labs(title = "Web Purchases by Marital Status",
+       x = "Marital Status",
+       y = "Number of Web Purchases") +
+  theme_minimal() +
+  theme(legend.position = "none" , panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(size = 14, face = "bold",  hjust = 0.5),
+
+    )
+```
+
+
+&nbsp;
+
+**Observation:**  When analyzing online purchasing habits, those in a relationship appear to shop marginally more online with an average of 4.10 purchases compared to their single counterparts at 4.09. This slight difference suggests that marital status has minimal impact on the frequency of online purchases, indicating similar digital shopping behaviors between these two demographic segments.
+
+
+&nbsp;
+
+## Having Kids vs Purchase Place
+```{r}
+
+csvData <- csvData %>%
+  mutate(Has_Kids = if_else(Kidhome + Teenhome > 0, "Has Kids", "No Kids"))
+
+kids_online_stats <- csvData %>%
+  group_by(Has_Kids) %>%
+  summarise(Average_Online_Purchases = mean(NumWebPurchases, na.rm = TRUE)) %>%
+  ungroup()
+
+print(as.data.frame(kids_online_stats), row.names = FALSE)
+
+ggplot(csvData, aes(x = Has_Kids, y = NumWebPurchases, fill = Has_Kids)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("No Kids" = "#2ca02c", "Has Kids" = "#d62728")) +
+  labs(title = "Web Purchases by Parental Status",
+       x = "Parental Status",
+       y = "Number of Web Purchases") +
+  theme_minimal() +
+  theme(legend.position = "none",  panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(size = 14, face = "bold",  hjust = 0.5),)
+
+```
+
+&nbsp;
+
+**Observation:** Interestingly, individuals without kids tend to make more online purchases (an average of 4.42) compared to those with kids (an average of 3.97). This could suggest that the time constraints and responsibilities of parenthood possibly influence the lower frequency of online shopping among parents.
+
+
+&nbsp;
+
+## Age Group vs Purchase Place
+```{r}
+
+csvData <- csvData %>%
+  mutate(Age = 2023 - Year_Birth,
+         Age_Group = case_when(
+           Age <= 30 ~ "0-30",
+           Age > 30 & Age <= 60 ~ "31-60",
+           Age > 60 ~ "61-90",
+           TRUE ~ "Unknown"
+         ))
+
+age_online_stats <- csvData %>%
+  group_by(Age_Group) %>%
+  summarise(Average_Online_Purchases = mean(NumWebPurchases, na.rm = TRUE)) %>%
+  ungroup()
+
+print(as.data.frame(age_online_stats), row.names = FALSE)
+
+ggplot(csvData, aes(x = Age_Group, y = NumWebPurchases, fill = Age_Group)) +
+  geom_boxplot() +
+  scale_fill_brewer(palette = "Pastel1") +
+  labs(title = "Online Purchases by Age Group",
+       x = "Age Group",
+       y = "Number of Web Purchases") +
+  theme_minimal() +
+  theme(legend.position = "none",  panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(size = 14, face = "bold",  hjust = 0.5),
+
+    )
+
+```
+
+&nbsp;
+
+**Observation:** Online purchasing trends increase with age, with the youngest group (0-30) averaging 3.67 online purchases, the middle-aged (31-60) at 3.90, and the older group (61-90) leading at 4.55. This progression indicates a greater inclination towards online shopping as customers age, possibly due to higher disposable income or a preference for the convenience of online platforms.
+
+
+&nbsp;
+
+
+## Expenses vs Web Activity 
+```{r}
+csvData <- csvData %>%
+  filter(Total_Spendings >= 0 & NumWebVisitsMonth <= 10)
+
+# Group data by number of web visits per month and calculate the average expenses
+web_activity_stats <- csvData %>%
+  group_by(NumWebVisitsMonth) %>%
+  summarise(Average_Expenses = mean(Total_Spendings, na.rm = TRUE)) %>%
+  ungroup()
+
+# Print the data frame without row names
+print(as.data.frame(web_activity_stats), row.names = FALSE)
+
+# Create the plot with the filtered data
+ggplot(csvData, aes(x = NumWebVisitsMonth, y = Total_Spendings, color = NumWebVisitsMonth)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  scale_color_gradient(low = "lightblue", high = "blue") +
+  labs(title = "Expenses by Web Activity",
+       x = "Number of Web Visits in Last Month",
+       y = "Total Expenses") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+&nbsp;
+
+**Observation:** . It is observed that as the number of web visits increases up to 10 times a month, average expenses decrease. Customers with no web visits have the highest average spending of approximately $1,143. Conversely, those with 10 web visits per month have a lower average spending of roughly $212. This trend might suggest that customers who visit the website moderately are spending less on average than those with minimal to no online engagement. The highest average spending is associated with those who have the least online presence, which may imply that non-engaged customers are less exposed to online marketing efforts that could potentially drive higher spending.
+
+&nbsp;
+
+## Complaints vs Expenses
+```{r}
+complaints_stats <- csvData %>%
+  group_by(Complain) %>%
+  summarise(Average_Expenses = mean(Total_Spendings, na.rm = TRUE)) %>%
+  ungroup()
+
+print(as.data.frame(complaints_stats), row.names = FALSE)
+
+ggplot(csvData, aes(x = factor(Complain), y = Total_Spendings, fill = factor(Complain))) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("0" = "lightblue", "1" = "blueviolet")) +
+  labs(title = "Expenses by Complaint Status",
+       x = "Complaint in Last 2 Years",
+       y = "Total Expenses") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 14, face = "bold",  hjust = 0.5))
+```
+
+&nbsp;
+
+**Observation:** Data indicates that customers who have not registered complaints in the last two years spend more on average, with their expenses amounting to $607, compared to $392 for those who have complained. This suggests a potential correlation between customer satisfaction and spending habits, highlighting the importance of addressing customer grievances to maintain higher spending levels.
+
+&nbsp;
+
+## Recency vs Expenses
+```{r}
+csvData <- csvData %>%
+  mutate(Total_Spendings = rowSums(select(., starts_with("Mnt"))))
+
+recency_expenses_stats <- csvData %>%
+  group_by(Recency) %>%
+  summarise(Average_Expenses = mean(Total_Spendings, na.rm = TRUE)) %>%
+  ungroup()
+
+print(recency_expenses_stats, row.names = FALSE)
+
+
+ggplot(csvData, aes(x = Recency, y = Total_Spendings)) +
+  geom_point(alpha = 0.6, color = "coral") +
+  geom_smooth(method = "lm", se = FALSE, color = "darkslategray") +
+  labs(title = "Expenses by Recency of Purchase",
+       x = "Days Since Last Purchase (Recency)",
+       y = "Total Expenses") +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+&nbsp;
+
+**Observation:** There is a non-linear relationship between the recency of purchases and average expenses. Customers who have made a purchase very recently, like on day 0, have an average spending of $450. Interestingly, spending appears to fluctuate regardless of recency, with some peaks at various intervals — for instance, average spending is quite high at $865 for those who made a purchase 35 days ago. This pattern could suggest sporadic purchasing behavior influenced by factors other than just the time since the last purchase
+
+&nbsp;
+
+
+# Key Insights
+&nbsp;
+
+```{r, echo=FALSE, results='asis'}
+cat("
+
+- **Age Distribution:** A mature customer base with a median age of 53 suggests targeting middle-aged to senior adults.
+
+- **Marital Status:** A majority in relationships indicates family-oriented purchasing decisions.
+
+- **Kidhome & Teenhome:** A prevalence of smaller families highlights opportunities for child-centric marketing.
+
+- **Education:** A highly educated customer base with over 50% having graduated suggests a focus on sophisticated products.
+
+- **Income:** A strong middle-class presence with incomes primarily between $40,000 to $80,000 suggests a market for quality, yet affordable products.
+
+- **Expenses:** A significant spend on wines and meats points to a customer preference for these categories.
+
+- **Campaigns:** Low campaign acceptance rates challenge the effectiveness of marketing strategies.
+
+- **Purchase Places:** Stores dominate purchases, but a significant one-third are online, showing the importance of a dual retail approach.
+
+- **Income vs Spendings:** High income correlates with higher spending, indicating the potential for luxury marketing.
+
+- **Age vs Spendings:** Age is a weaker predictor of spending, suggesting a diversified approach across age groups.
+
+- **Marital Status vs Spendings:** Single customers spend slightly more, potentially indicating more disposable income.
+
+- **Having Kids vs Expenses:** Childless customers have significantly higher average spending, indicating more discretionary spending.
+
+- **Education vs Income & Expenses:** Higher education levels correlate with higher income and spending, underscoring targeted marketing for higher education levels.
+
+- **Campaigns vs Expenses:** Customers who engage with campaigns tend to spend more, highlighting the success of targeted marketing campaigns.
+
+- **Age vs Product Type:** Preferences for wines across age groups, with younger customers also spending significantly on meats.
+
+- **Marital Status vs Purchase Place:** Minimal difference in online purchasing between singles and those in relationships.
+
+- **Having Kids vs Purchase Place:** Those without kids shop more online, suggesting the influence of parenting responsibilities.
+
+- **Age Group vs Purchase Place:** Older customers tend to make more online purchases, indicating a potential focus on online marketing for older demographics.
+
+- **Expenses vs Web Activity:** Higher web activity correlates with lower spending, indicating a more deal-savvy or selective customer.
+
+- **Complaints vs Expenses:** Customers who haven't complained spend more, linking customer satisfaction to spending.
+
+- **Recency vs Expenses:** A complex relationship with no clear pattern, suggesting sporadic purchasing influenced by diverse factors.
+
+
+In conclusion, the study reveals a customer profile that is mature, well-educated, and family-oriented with spending habits that gravitate towards quality products like wines and meats. Campaign responsiveness and customer satisfaction emerge as pivotal factors influencing spending, while web engagement and family dynamics demonstrate nuanced effects on purchasing behavior. These insights are crucial for tailoring marketing strategies to the distinct needs and preferences of the customer base.
+")
+
+```

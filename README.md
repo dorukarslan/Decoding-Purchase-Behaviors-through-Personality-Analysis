@@ -1,5 +1,15 @@
 # Customer Essence: Decoding Purchase Behaviors through Personality Analysis
 
+<p align="center">
+  <img src="https://github.com/dorukarslan/Decoding-Purchase-Behaviors-through-Personality-Analysis/assets/79598598/8d3bb7c3-9ff4-4bc6-b6a3-246bcc6614b6" width="50%" height="50%">
+</p>
+
+
+- [Click here for the rendered document](https://dorukarslan.github.io/Decoding-Purchase-Behaviors-through-Personality-Analysis/)
+- [Click here for the PDF document](https://github.com/dorukarslan/Decoding-Purchase-Behaviors-through-Personality-Analysis/blob/main/Customer-Essence.pdf)
+
+
+  
 ## **Introduction**
 
 This project aims to explore the Customer Personality Analysis dataset to reveal the relationship between customer features and their purchase behavior. The analysis investigates various aspects of customer demographics and behavior to understand how these factors influence spending patterns.
